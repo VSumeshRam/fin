@@ -16,3 +16,9 @@ services:
       - "5432:5432"
     volumes:
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  ml-sidecar:
+    build: ./ml-sidecar
+    ports:
+      - "8000:8000"
+
