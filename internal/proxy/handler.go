@@ -58,16 +58,18 @@ func NewHandler(upstreamURL string, auditLedger *ledger.Ledger) (http.HandlerFun
 		proxy.ServeHTTP(wrapper, r)
 
 		// Record Audit asynchronously
-		record := ledger.AuditRecord{
-			RequestID:     requestID,
-			TeamID:        teamID,
-			SessionID:     sessionID,
-			Model:         "default", // Extracted from payload in a real scenario
-			PromptHash:    promptHash,
-			StatusCode:    wrapper.statusCode,
-			CostUSD:       0.01, // Example static cost for V1
-			BlockedReason: nil,
+		if auditLedger != nil {
+			record := ledger.AuditRecord{
+				RequestID:     requestID,
+				TeamID:        teamID,
+				SessionID:     sessionID,
+				Model:         "default", // Extracted from payload in a real scenario
+				PromptHash:    promptHash,
+				StatusCode:    wrapper.statusCode,
+				CostUSD:       0.01, // Example static cost for V1
+				BlockedReason: nil,
+			}
+			auditLedger.Record(record)
 		}
-		auditLedger.Record(record)
 	}, nil
 }
