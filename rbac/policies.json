@@ -1,0 +1,4 @@
+{
+  "team_marketing": ["query_analytics", "send_email"],
+  "team_engineering": ["*"]
+}
