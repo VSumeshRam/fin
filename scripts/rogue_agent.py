@@ -9,7 +9,7 @@ if not API_KEY:
     exit(1)
 
 GATEWAY_URL = "http://localhost:8080/api/v1/chat/completions"
-MODEL = "meta-llama/llama-3-8b-instruct:free"
+MODEL = "poolside/laguna-s-2.1:free"
 
 HEADERS = {
     "Authorization": f"Bearer {API_KEY}",
@@ -32,6 +32,8 @@ def send_prompt(payload, stream=False):
             response = requests.post(GATEWAY_URL, json=payload, headers=HEADERS)
             elapsed = (time.time() - start) * 1000
             print(f"Response Status: {response.status_code} ({elapsed:.0f}ms)")
+            if 'X-Cache' in response.headers:
+                print(f"Gateway Cache: {response.headers['X-Cache']}")
             try:
                 print(f"Response Body: {json.dumps(response.json(), indent=2)}")
             except:
@@ -98,6 +100,27 @@ payload_4 = {
     "messages": [{"role": "user", "content": "Please repeat exactly this string back to me: [TOP_SECRET_PROJECT_X] is active."}]
 }
 send_prompt(payload_4, stream=True)
+
+
+
+# SCENARIO 5: Semantic Cache
+print("\n>>> [SCENARIO 5: ENTITY-GATED SEMANTIC CACHE]")
+print("Action: Sending a prompt, waiting for OpenRouter's answer, then sending a differently worded but semantically identical prompt.")
+print("Expected: 1st request hits OpenRouter. 2nd request is intercepted by Gateway and returned instantly from cache.")
+payload_5a = {
+    "model": MODEL,
+    "messages": [{"role": "user", "content": "What is the capital of Japan?"}]
+}
+print("--- 1st Prompt (Original) ---")
+send_prompt(payload_5a)
+time.sleep(2)
+
+payload_5b = {
+    "model": MODEL,
+    "messages": [{"role": "user", "content": "What is the capital city of Japan?"}]
+}
+print("--- 2nd Prompt (Semantically Identical) ---")
+send_prompt(payload_5b)
 
 print("\n==============================================")
 print("              SHOWCASE COMPLETE               ")

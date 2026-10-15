@@ -1,6 +1,6 @@
 import re
 import hashlib
-import random
+import math
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
@@ -18,17 +18,25 @@ class NERResponse(BaseModel):
 
 @app.post("/v1/embed", response_model=EmbedResponse)
 def get_embedding(req: TextRequest):
-    # Deterministic hash of the input string
-    seed_str = req.text.strip().lower()
-    hash_obj = hashlib.sha256(seed_str.encode('utf-8'))
-    seed_int = int(hash_obj.hexdigest(), 16)
+    # Bag-of-Words Mock Embedding (No heavy dependencies!)
+    text = req.text.lower()
+    # Remove punctuation
+    text = re.sub(r'[^\w\s]', '', text)
+    words = text.split()
     
-    # Use the hash as a seed for the random number generator
-    random.seed(seed_int)
+    # Initialize 384-dimensional vector
+    vector = [0.0] * 384
     
-    # Generate 384 pseudo-random floats between -1.0 and 1.0
-    vector = [random.uniform(-1.0, 1.0) for _ in range(384)]
-    
+    # Hash each word to an index and increment
+    for word in set(words): # Use set to avoid double counting same word
+        idx = int(hashlib.sha256(word.encode('utf-8')).hexdigest(), 16) % 384
+        vector[idx] += 1.0
+        
+    # Normalize the vector (so dot product equals cosine similarity)
+    magnitude = math.sqrt(sum(v*v for v in vector))
+    if magnitude > 0:
+        vector = [v / magnitude for v in vector]
+        
     return EmbedResponse(vector=vector)
 
 @app.post("/v1/ner", response_model=NERResponse)
@@ -36,27 +44,11 @@ def get_entities(req: TextRequest):
     text = req.text
     entities = []
     
-    # 1. Emails
-    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-    emails = re.findall(email_pattern, text)
-    entities.extend(emails)
+    # Simple Mock: Extract Capitalized words (e.g. "Japan")
+    words = re.findall(r'\b[A-Z][a-z]+\b', text)
+    entities.extend(words)
     
-    # 2. Dates (YYYY) - Simple 4 digit year
-    year_pattern = r'\b(19|20)\d{2}\b'
-    years = [m.group(0) for m in re.finditer(year_pattern, text)]
-    entities.extend(years)
-    
-    # 3. Currency / Numbers (e.g. $100, 500)
-    # Simple regex for numbers possibly preceded by a currency symbol
-    money_pattern = r'[\$£€]?\b\d+(?:\.\d{2})?\b'
-    money = re.findall(money_pattern, text)
-    # Exclude years from money if they accidentally matched
-    money = [m for m in money if m not in years]
-    entities.extend(money)
-    
-    # Deduplicate and sort
     unique_entities = sorted(list(set(entities)))
-    
     return NERResponse(entities=unique_entities)
 
 if __name__ == "__main__":

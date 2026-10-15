@@ -1,17 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"io"
 	"log"
 	"net/http"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/finops-gateway/internal/ledger"
 	"github.com/finops-gateway/internal/middleware"
 	"github.com/finops-gateway/internal/ml"
 	"github.com/finops-gateway/internal/proxy"
+	"github.com/finops-gateway/internal/schema"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -30,15 +29,15 @@ func main() {
 		Addr: mr.Addr(),
 	})
 
-	// 2. We skip Postgres for this demo (nil passed to handler)
-	log.Println("Bypassing Postgres Audit Ledger for local demo run.")
+	// 2. Initialize the JSONL Audit Ledger
+	auditLedger := ledger.NewLedger("audit_logs.jsonl")
 
 	// 3. Connect to the local ML Sidecar
 	mlClient := ml.NewClient("http://localhost:8000")
 
-	// 4. Point Upstream directly to OpenRouter (Free OpenAI Compatible API)
-	upstreamURL := "https://openrouter.ai"
-	proxyHandler, err := proxy.NewHandler(upstreamURL, nil)
+	// 4. Point Upstream to local mock LLM
+	upstreamURL := "http://localhost:8081"
+	proxyHandler, err := proxy.NewHandler(upstreamURL)
 	if err != nil {
 		log.Fatalf("Failed to initialize proxy handler: %v", err)
 	}
@@ -55,26 +54,16 @@ func main() {
 	nonStreamingChain = middleware.MCPFirewall(rbacEngine, nonStreamingChain)
 	nonStreamingChain = middleware.PIIMasker(nonStreamingChain)
 
-	// Streaming Branch
+	// Streaming Branch (with PII masking in-memory)
 	streamingChain := middleware.StreamInterceptor(proxyHandler)
+	streamingChain = middleware.PIIMasker(streamingChain)
 
 	// Branch Router
 	branchRouter := func(w http.ResponseWriter, r *http.Request) {
-		bodyBytes, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "Failed to read body", http.StatusInternalServerError)
-			return
-		}
-		
 		isStream := false
-		var payload map[string]interface{}
-		if err := json.Unmarshal(bodyBytes, &payload); err == nil {
-			if stream, ok := payload["stream"].(bool); ok && stream {
-				isStream = true
-			}
+		if payload, ok := r.Context().Value(middleware.StandardPayloadKey).(*schema.StandardPayload); ok {
+			isStream = payload.Stream
 		}
-		
-		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
 		if isStream {
 			streamingChain.ServeHTTP(w, r)
@@ -87,10 +76,14 @@ func main() {
 	handler := middleware.StateReplay(rdb, branchRouter)
 	handler = middleware.LoopBreaker(rdb, handler)
 	handler = middleware.BudgetGuard(rdb, handler)
+	handler = middleware.InboundAdapter(handler)
+	
+	// Add the Audit Logger at the very edge!
+	handler = middleware.AuditLogger(auditLedger, handler)
 
-	// Inject 50,000 tokens into the marketing team's budget so the demo runs
-	rdb.Set(context.Background(), "budget:team_marketing", 50000, 0)
-	rdb.Set(context.Background(), "budget:team_engineering", 50000, 0)
+	// Inject $0.05 (50,000 micro-dollars) into the teams' budgets so the demo runs
+	rdb.Set(context.Background(), "budget:team:team_marketing", 50000, 0)
+	rdb.Set(context.Background(), "budget:team:team_engineering", 50000, 0)
 
 	// 7. Start the Server
 	log.Printf("Listening on :8080 and forwarding to %s...\n", upstreamURL)

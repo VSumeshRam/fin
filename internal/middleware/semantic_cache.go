@@ -74,7 +74,7 @@ func SemanticCache(redisClient *redis.Client, mlClient *ml.Client, next http.Han
 
 				// The Decision Gate
 				similarity := ml.CosineSimilarity(vector, entry.Vector)
-				if similarity >= 0.95 {
+				if similarity >= 0.90 {
 					// Check exact entity match
 					if stringSlicesEqual(entities, entry.Entities) {
 						// CACHE HIT

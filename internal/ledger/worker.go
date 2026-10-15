@@ -1,72 +1,75 @@
 package ledger
 
 import (
-	"context"
+	"bufio"
+	"encoding/json"
 	"log"
-
-	"github.com/jackc/pgx/v5/pgxpool"
+	"os"
 )
 
 type AuditRecord struct {
-	RequestID     string
-	TeamID        string
-	SessionID     string
-	Model         string
-	PromptHash    string
-	StatusCode    int
-	CostUSD       float64
-	BlockedReason *string
+	Timestamp        string `json:"timestamp"`
+	RequestID        string `json:"request_id"`
+	TeamID           string `json:"team_id"`
+	SessionID        string `json:"session_id"`
+	Model            string `json:"model"`
+	PromptHash       string `json:"prompt_hash,omitempty"`
+	StatusCode       int    `json:"status_code"`
+	DurationMs       int64  `json:"duration_ms"`
+	PromptTokens     int    `json:"prompt_tokens"`
+	CompletionTokens int    `json:"completion_tokens"`
+	TotalTokens      int    `json:"total_tokens"`
+	MicroDollarCost  int64  `json:"cost_micro_usd"`
+	BlockedReason    string `json:"blocked_reason,omitempty"`
 }
 
 type Ledger struct {
-	pool    *pgxpool.Pool
 	channel chan AuditRecord
 }
 
-func NewLedger(pool *pgxpool.Pool, workerCount int) *Ledger {
+func NewLedger(filePath string) *Ledger {
 	l := &Ledger{
-		pool:    pool,
 		channel: make(chan AuditRecord, 10000), // Buffer to absorb spikes
 	}
 
-	// Start worker pool
-	for i := 0; i < workerCount; i++ {
-		go l.worker()
-	}
+	// Start single worker for thread-safe sequential file I/O
+	go l.worker(filePath)
 
 	return l
 }
 
-func (l *Ledger) Record(record AuditRecord) {
+func (l *Ledger) Record(record *AuditRecord) {
 	select {
-	case l.channel <- record:
+	case l.channel <- *record:
 		// successfully queued
 	default:
 		log.Printf("Warning: Audit ledger channel full, dropping record %s", record.RequestID)
 	}
 }
 
-func (l *Ledger) worker() {
+func (l *Ledger) worker(filePath string) {
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Failed to open audit log file: %v", err)
+	}
+	defer file.Close()
+
+	writer := bufio.NewWriter(file)
+
 	for record := range l.channel {
-		err := l.insert(record)
+		b, err := json.Marshal(record)
 		if err != nil {
-			log.Printf("Error inserting audit log: %v", err)
+			log.Printf("Error marshalling audit record: %v", err)
+			continue
 		}
+		
+		_, err = writer.Write(append(b, '\n'))
+		if err != nil {
+			log.Printf("Error writing audit record to file: %v", err)
+		}
+		
+		// Flush periodically or on every write (for demo, on every write is fine)
+		writer.Flush()
 	}
 }
 
-func (l *Ledger) insert(record AuditRecord) error {
-	query := `
-		INSERT INTO audit_logs (
-			request_id, team_id, session_id, model, prompt_hash,
-			status_code, cost_usd, blocked_reason
-		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8
-		)
-	`
-	_, err := l.pool.Exec(context.Background(), query,
-		record.RequestID, record.TeamID, record.SessionID, record.Model, record.PromptHash,
-		record.StatusCode, record.CostUSD, record.BlockedReason,
-	)
-	return err
-}

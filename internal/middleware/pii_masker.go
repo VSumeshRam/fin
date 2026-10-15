@@ -3,26 +3,26 @@ package middleware
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/finops-gateway/internal/schema"
 )
 
 type contextKey string
 
 const piiMapKey contextKey = "pii_map"
 
-// ResponseRecorder intercepts the response for PII restoration
-type ResponseRecorder struct {
+// PIIResponseRecorder intercepts the response for PII restoration
+type PIIResponseRecorder struct {
 	http.ResponseWriter
 	Body *bytes.Buffer
 }
 
-func (rw *ResponseRecorder) Write(b []byte) (int, error) {
+func (rw *PIIResponseRecorder) Write(b []byte) (int, error) {
 	return rw.Body.Write(b)
 }
 
@@ -34,27 +34,18 @@ func PIIMasker(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		piiMap := make(map[string]string)
 		
-		if r.Body != nil {
-			bodyBytes, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, "Failed to read body", http.StatusInternalServerError)
-				return
-			}
+		// 1. Read the injected struct pointer from Context
+		isStream := false
+		if payload, ok := r.Context().Value(StandardPayloadKey).(*schema.StandardPayload); ok {
+			isStream = payload.Stream
 			
-			// Try parsing as JSON to safely mutate "stream"
-			var payload map[string]interface{}
-			if err := json.Unmarshal(bodyBytes, &payload); err == nil {
-				// Mutate stream: true to stream: false
-				if stream, ok := payload["stream"].(bool); ok && stream {
-					payload["stream"] = false
-				}
+			// Extract and mask Emails & SSNs in every message
+			emailCounter := 1
+			ssnCounter := 1
+
+			for i, msg := range payload.Messages {
+				bodyStr := msg.Content
 				
-				// Re-marshal to string to apply regex masking easily, or marshal back directly
-				newBodyBytes, _ := json.Marshal(payload)
-				bodyStr := string(newBodyBytes)
-				
-				// Extract and mask Emails
-				emailCounter := 1
 				bodyStr = emailPattern.ReplaceAllStringFunc(bodyStr, func(match string) string {
 					token := fmt.Sprintf("[EMAIL_%d]", emailCounter)
 					piiMap[token] = match
@@ -62,8 +53,6 @@ func PIIMasker(next http.HandlerFunc) http.HandlerFunc {
 					return token
 				})
 				
-				// Extract and mask SSNs
-				ssnCounter := 1
 				bodyStr = ssnPattern.ReplaceAllStringFunc(bodyStr, func(match string) string {
 					token := fmt.Sprintf("[SSN_%d]", ssnCounter)
 					piiMap[token] = match
@@ -71,21 +60,23 @@ func PIIMasker(next http.HandlerFunc) http.HandlerFunc {
 					return token
 				})
 
-				maskedBytes := []byte(bodyStr)
-				r.Body = io.NopCloser(bytes.NewBuffer(maskedBytes))
-				r.ContentLength = int64(len(maskedBytes))
-			} else {
-				// If not valid JSON, just restore it unmodified
-				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+				// Mutate the struct directly in memory!
+				payload.Messages[i].Content = bodyStr
 			}
 		}
 
-		// Inject map into context
+		// If streaming, bypass response buffering so SSE chunks flush immediately to client
+		if isStream {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Inject map into context so we can unmask the response
 		ctx := context.WithValue(r.Context(), piiMapKey, piiMap)
 		r = r.WithContext(ctx)
 
 		// Create recorder to buffer upstream response
-		recorder := &ResponseRecorder{
+		recorder := &PIIResponseRecorder{
 			ResponseWriter: w,
 			Body:           &bytes.Buffer{},
 		}
