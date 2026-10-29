@@ -8,9 +8,11 @@ type Message struct {
 
 // StandardPayload represents the universal decoupled request
 type StandardPayload struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   bool      `json:"stream"`
+	Model     string        `json:"model"`
+	Messages  []Message     `json:"messages"`
+	Stream    bool          `json:"stream,omitempty"`
+	MaxTokens int           `json:"max_tokens,omitempty"`
+	Tools     []interface{} `json:"tools,omitempty"`
 }
 
 // TokenUsage is the universal struct for tracking FinOps metrics

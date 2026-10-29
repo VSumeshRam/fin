@@ -20,6 +20,7 @@ type AuditRecord struct {
 	CompletionTokens int    `json:"completion_tokens"`
 	TotalTokens      int    `json:"total_tokens"`
 	MicroDollarCost  int64  `json:"cost_micro_usd"`
+	CacheHit         bool   `json:"cache_hit"`
 	BlockedReason    string `json:"blocked_reason,omitempty"`
 }
 
@@ -62,14 +63,12 @@ func (l *Ledger) worker(filePath string) {
 			log.Printf("Error marshalling audit record: %v", err)
 			continue
 		}
-		
+
 		_, err = writer.Write(append(b, '\n'))
 		if err != nil {
 			log.Printf("Error writing audit record to file: %v", err)
 		}
-		
-		// Flush periodically or on every write (for demo, on every write is fine)
+
 		writer.Flush()
 	}
 }
-
