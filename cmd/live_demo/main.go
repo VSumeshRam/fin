@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/finops-gateway/internal/dashboard"
 	"github.com/finops-gateway/internal/ledger"
 	"github.com/finops-gateway/internal/middleware"
 	"github.com/finops-gateway/internal/ml"
@@ -84,6 +85,9 @@ func main() {
 	// Inject $0.05 (50,000 micro-dollars) into the teams' budgets so the demo runs
 	rdb.Set(context.Background(), "budget:team:team_marketing", 50000, 0)
 	rdb.Set(context.Background(), "budget:team:team_engineering", 50000, 0)
+
+	// Start Dashboard Server concurrently on port 3000
+	dashboard.StartServer("3000", rdb, "audit_logs.jsonl")
 
 	// 7. Start the Server
 	log.Printf("Listening on :8080 and forwarding to %s...\n", upstreamURL)

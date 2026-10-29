@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise AI FinOps Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .header h1 { color: #38bdf8; margin: 0; }
+        .header p { color: #94a3b8; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .card { background-color: #1e293b; padding: 20px; border-radius: 8px; border: 1px solid #334155; }
+        .card h2 { margin-top: 0; color: #38bdf8; font-size: 1.2rem; }
+        .stat-value { font-size: 2.5rem; font-weight: bold; margin: 10px 0; }
+        .text-green { color: #4ade80; }
+        .text-red { color: #f87171; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 8px; border-bottom: 1px solid #334155; }
+        th { color: #94a3b8; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>FinOps Gateway Control Plane</h1>
+        <p>Real-Time Financial Governance & Security Telemetry</p>
+    </div>
+
+    <div class="grid">
+        <!-- Budgets Card -->
+        <div class="card">
+            <h2>Live Team Budgets (USD)</h2>
+            <table id="budgetTable">
+                <thead><tr><th>Team</th><th>Remaining Balance</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <!-- Savings Card -->
+        <div class="card">
+            <h2>Semantic Cache Savings</h2>
+            <div class="stat-value text-green" id="savedUsd">$0.00</div>
+            <p style="color: #94a3b8;">Dollars saved via network bypass</p>
+        </div>
+
+        <!-- Security Card -->
+        <div class="card">
+            <h2>Security Incidents Intercepted</h2>
+            <div class="stat-value text-red" id="incidents">0</div>
+            <p style="color: #94a3b8;">MCP Blocks & Streaming Guillotine</p>
+        </div>
+
+        <!-- Model Usage Chart -->
+        <div class="card">
+            <h2>Model Consumption</h2>
+            <canvas id="modelChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        let chartInstance = null;
+
+        async function fetchStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                updateUI(data);
+            } catch (error) {
+                console.error("Error fetching stats:", error);
+            }
+        }
+
+        function updateUI(data) {
+            // Update Savings and Incidents
+            document.getElementById('savedUsd').innerText = '$' + data.total_saved_usd.toFixed(4);
+            document.getElementById('incidents').innerText = data.security_incidents;
+
+            // Update Budget Table
+            const tbody = document.querySelector('#budgetTable tbody');
+            tbody.innerHTML = '';
+            for (const [team, budget] of Object.entries(data.team_budgets)) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${team}</td><td>$${budget.toFixed(2)}</td>`;
+                tbody.appendChild(tr);
+            }
+
+            // Update Chart
+            updateChart(data.model_usage);
+        }
+
+        function updateChart(modelUsage) {
+            const ctx = document.getElementById('modelChart').getContext('2d');
+            const labels = Object.keys(modelUsage);
+            const values = Object.values(modelUsage);
+
+            if (chartInstance) {
+                chartInstance.data.labels = labels;
+                chartInstance.data.datasets[0].data = values;
+                chartInstance.update();
+            } else {
+                chartInstance = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: values,
+                            backgroundColor: ['#38bdf8', '#4ade80', '#fbbf24', '#f87171'],
+                            borderColor: '#1e293b',
+                            borderWidth: 2
+                        }]
+                    },
+                    options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { color: '#f8fafc' } } } }
+                });
+            }
+        }
+
+        // Fetch stats immediately and then every 2 seconds
+        fetchStats();
+        setInterval(fetchStats, 2000);
+    </script>
+</body>
+</html>
