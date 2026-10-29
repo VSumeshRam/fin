@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
+
+	"github.com/finops-gateway/internal/ledger"
 )
 
+// PolicyEngine maps Team IDs to a list of allowed MCP tool names
 type PolicyEngine map[string][]string
 
+// LoadPolicies reads the JSON RBAC matrix from disk
 func LoadPolicies(filepath string) (PolicyEngine, error) {
 	file, err := os.Open(filepath)
 	if err != nil {
@@ -30,6 +35,7 @@ func LoadPolicies(filepath string) (PolicyEngine, error) {
 	return engine, nil
 }
 
+// IsAllowed checks if a specific team is authorized to execute a specific tool
 func (pe PolicyEngine) IsAllowed(teamID, toolName string) bool {
 	allowedTools, exists := pe[teamID]
 	if !exists {
@@ -43,26 +49,26 @@ func (pe PolicyEngine) IsAllowed(teamID, toolName string) bool {
 	return false
 }
 
-// MCPFirewall intercepts LLM tool_calls and enforces RBAC
+// MCPFirewall intercepts LLM tool_calls (function execution payloads) and enforces RBAC
 func MCPFirewall(engine PolicyEngine, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		teamID := r.Header.Get("X-Team-ID")
 
-		// Create a ResponseRecorder to buffer the upstream response
+		// Buffer the upstream response so we can inspect it for tool_calls before sending it to the client
 		recorder := &CacheRecorder{
 			ResponseWriter: w,
 			Body:           &bytes.Buffer{},
 			statusCode:     http.StatusOK, // Default
 		}
 
+		// Execute downstream (which ultimately calls the Proxy)
 		next.ServeHTTP(recorder, r)
 
-		// Inspect the JSON response payload for tool_calls
 		respBytes := recorder.Body.Bytes()
 		
-		// Attempt to parse standard OpenAI completion format
+		// Attempt to parse standard OpenAI completion format to hunt for tool_calls
 		var payload map[string]interface{}
-		unauthorized := false
+		unauthorizedTool := ""
 		
 		if err := json.Unmarshal(respBytes, &payload); err == nil {
 			if choices, ok := payload["choices"].([]interface{}); ok && len(choices) > 0 {
@@ -73,9 +79,9 @@ func MCPFirewall(engine PolicyEngine, next http.HandlerFunc) http.HandlerFunc {
 								if tc, ok := tcRaw.(map[string]interface{}); ok {
 									if function, ok := tc["function"].(map[string]interface{}); ok {
 										if name, ok := function["name"].(string); ok {
-											// Check RBAC
+											// Check RBAC Policy Matrix
 											if !engine.IsAllowed(teamID, name) {
-												unauthorized = true
+												unauthorizedTool = name
 												break
 											}
 										}
@@ -88,8 +94,17 @@ func MCPFirewall(engine PolicyEngine, next http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 
-		if unauthorized {
-			errorMsg := []byte(`{"error": "Unauthorized MCP tool execution blocked by Gateway."}`)
+		// If a rogue tool call was detected, block the response physically
+		if unauthorizedTool != "" {
+			log.Printf("[MCP Firewall] BLOCKED: Team '%s' attempted unauthorized tool '%s'", teamID, unauthorizedTool)
+			
+			// Log the security incident in the Audit Ledger
+			if rec, ok := r.Context().Value(LogRecordKey).(*ledger.AuditRecord); ok {
+				rec.BlockedReason = "MCP Tool Forbidden: " + unauthorizedTool
+				rec.StatusCode = http.StatusForbidden
+			}
+
+			errorMsg := []byte(`{"error": "Unauthorized MCP Tool Call: '` + unauthorizedTool + `' is forbidden for ` + teamID + `."}`)
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Content-Length", strconv.Itoa(len(errorMsg)))
 			w.WriteHeader(http.StatusForbidden)
@@ -97,7 +112,7 @@ func MCPFirewall(engine PolicyEngine, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Normal execution, pass through the buffer
+		// Safe execution: flush the buffered bytes to the client
 		w.WriteHeader(recorder.statusCode)
 		w.Write(respBytes)
 	}

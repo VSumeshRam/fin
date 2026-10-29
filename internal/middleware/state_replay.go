@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/finops-gateway/internal/schema"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -19,6 +20,12 @@ func StateReplay(redisClient *redis.Client, next http.HandlerFunc) http.HandlerF
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.Header.Get("X-Session-ID")
 		if sessionID == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Streaming requests bypass buffering so SSE chunks flush immediately to client
+		if payload, ok := r.Context().Value(StandardPayloadKey).(*schema.StandardPayload); ok && payload.Stream {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -64,6 +71,7 @@ func StateReplay(redisClient *redis.Client, next http.HandlerFunc) http.HandlerF
 		// we need to handle writing it. Actually, Proxy copies to recorder.
 		// Wait, StreamInterceptor uses its own Recorder, so if stream: true, this doesn't run? 
 		// StateReplay is for tool calls, which are non-streaming JSON blocks. So we only cache non-streaming responses.
+		w.WriteHeader(recorder.statusCode)
 		w.Write(respBytes)
 		
 		if recorder.statusCode == http.StatusOK {

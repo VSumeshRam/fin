@@ -1,4 +1,4 @@
 {
-  "team_marketing": ["query_analytics", "send_email"],
+  "team_marketing": ["web_search", "generate_image"],
   "team_engineering": ["*"]
 }

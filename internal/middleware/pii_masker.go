@@ -19,7 +19,12 @@ const piiMapKey contextKey = "pii_map"
 // PIIResponseRecorder intercepts the response for PII restoration
 type PIIResponseRecorder struct {
 	http.ResponseWriter
-	Body *bytes.Buffer
+	Body       *bytes.Buffer
+	statusCode int
+}
+
+func (rw *PIIResponseRecorder) WriteHeader(code int) {
+	rw.statusCode = code
 }
 
 func (rw *PIIResponseRecorder) Write(b []byte) (int, error) {
@@ -79,6 +84,7 @@ func PIIMasker(next http.HandlerFunc) http.HandlerFunc {
 		recorder := &PIIResponseRecorder{
 			ResponseWriter: w,
 			Body:           &bytes.Buffer{},
+			statusCode:     http.StatusOK,
 		}
 
 		next.ServeHTTP(recorder, r)
@@ -91,8 +97,7 @@ func PIIMasker(next http.HandlerFunc) http.HandlerFunc {
 
 		unmaskedBytes := []byte(respStr)
 		w.Header().Set("Content-Length", strconv.Itoa(len(unmaskedBytes)))
-		
-		// Note: The status code and headers are already written by proxy, but we can write the body now
+		w.WriteHeader(recorder.statusCode)
 		w.Write(unmaskedBytes)
 	}
 }

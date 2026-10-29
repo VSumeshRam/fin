@@ -3,10 +3,7 @@ import json
 import time
 import os
 
-API_KEY = os.getenv("OPENROUTER_API_KEY")
-if not API_KEY:
-    print("ERROR: Please set your OPENROUTER_API_KEY environment variable.")
-    exit(1)
+API_KEY = os.getenv("OPENROUTER_API_KEY", "sk-mock-key-live-demo")
 
 GATEWAY_URL = "http://localhost:8080/api/v1/chat/completions"
 MODEL = "poolside/laguna-s-2.1:free"
