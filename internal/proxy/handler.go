@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
@@ -175,6 +176,13 @@ func NewHandler(upstreamURL string) (http.HandlerFunc, error) {
 
 		// Prepare provider specific headers and target path
 		provider.PrepareRequest(r)
+
+		// Egress Secret Management: inject master API key if client omitted Authorization header
+		if r.Header.Get("Authorization") == "" {
+			if apiKey := os.Getenv("UPSTREAM_API_KEY"); apiKey != "" {
+				r.Header.Set("Authorization", "Bearer "+apiKey)
+			}
+		}
 
 		// Change host for reverse proxy to work with TLS correctly (e.g. api.openai.com)
 		r.Host = target.Host

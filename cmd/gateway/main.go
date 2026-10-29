@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/finops-gateway/internal/config"
+	"github.com/finops-gateway/internal/dashboard"
 	"github.com/finops-gateway/internal/ledger"
 	"github.com/finops-gateway/internal/middleware"
 	"github.com/finops-gateway/internal/ml"
@@ -32,7 +33,7 @@ func main() {
 	auditLedger := ledger.NewLedger("audit_logs.jsonl")
 	
 	// 3. Initialize ML Sidecar Client
-	mlClient := ml.NewClient("http://localhost:8000")
+	mlClient := ml.NewClient(cfg.MLSidecarURL)
 
 	// 4. Initialize Proxy Handler
 	proxyHandler, err := proxy.NewHandler(cfg.UpstreamURL)
@@ -79,7 +80,10 @@ func main() {
 	handler = middleware.InboundAdapter(handler)
 	handler = middleware.AuditLogger(auditLedger, handler)
 
-	// 7. Start HTTP Server
+	// 7. Start Real-Time Executive Dashboard concurrently
+	dashboard.StartServer(cfg.DashboardPort, rdb, "audit_logs.jsonl")
+
+	// 8. Start HTTP Server
 	log.Printf("Starting FinOps Gateway on :%s (Upstream: %s)\n", cfg.Port, cfg.UpstreamURL)
 	if err := http.ListenAndServe(":"+cfg.Port, handler); err != nil {
 		log.Fatalf("Server failed: %v", err)
