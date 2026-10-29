@@ -120,6 +120,19 @@ func NewHandler(upstreamURL string) (http.HandlerFunc, error) {
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	
+	// Universal Path Normalization:
+	// Automatically adapts target paths for any upstream provider (OpenAI, Gemini, OpenRouter, Groq, Ollama)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		basePath := strings.TrimSuffix(target.Path, "/")
+		if basePath != "" {
+			req.URL.Path = basePath + "/chat/completions"
+		} else {
+			req.URL.Path = "/v1/chat/completions"
+		}
+	}
+
 	openaiAdapter := &adapter.OpenAIAdapter{}
 	anthropicAdapter := &adapter.AnthropicAdapter{}
 
